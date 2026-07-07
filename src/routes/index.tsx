@@ -1,108 +1,79 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState, useCallback } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Suspense, useEffect, useMemo, useRef, useState, useCallback } from "react";
+import * as THREE from "three";
 
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Rail Runner — Endless Subway Dash" },
-      { name: "description", content: "A realistic subway-style endless runner. Dodge trains, jump barriers, slide under signs." },
+      { title: "Rail Rush — 3D Subway Runner" },
+      { name: "description", content: "A realistic 3D subway-style endless runner. Collect coins, dodge trains, jump barriers, slide under signs." },
     ],
   }),
-  component: Game,
+  component: Page,
 });
 
-type Obstacle = {
-  lane: 0 | 1 | 2;
-  z: number; // distance ahead
-  type: "train" | "barrier" | "sign";
-  length: number;
-};
+type ObType = "train" | "barrier" | "sign" | "coin";
+type Ob = { id: number; lane: -1 | 0 | 1; z: number; type: ObType; length: number; collected?: boolean };
 
-const LANES = [-1, 0, 1] as const;
-const LANE_WIDTH = 1.6;
-const HORIZON_Z = 90;
-const CAM_HEIGHT = 2.4;
-const FOCAL = 320;
+const LANE_X = 1.8;
+const SPAWN_Z = -120;
+const DESPAWN_Z = 8;
 
-function Game() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+function Page() {
   const [theme, setTheme] = useState<"light" | "dark">("light");
   const [running, setRunning] = useState(false);
-  const [score, setScore] = useState(0);
-  const [best, setBest] = useState(0);
   const [gameOver, setGameOver] = useState(false);
+  const [score, setScore] = useState(0);
+  const [coins, setCoins] = useState(0);
+  const [best, setBest] = useState(0);
 
   const stateRef = useRef({
-    lane: 1 as 0 | 1 | 2,
+    lane: 0 as -1 | 0 | 1,
     laneX: 0,
     y: 0,
     vy: 0,
-    sliding: 0,
-    speed: 18,
-    obstacles: [] as Obstacle[],
-    spawnCooldown: 0,
+    slide: 0,
+    speed: 14,
     distance: 0,
-    lastT: 0,
+    coins: 0,
+    obstacles: [] as Ob[],
+    spawnTimer: 0,
+    nextId: 1,
     running: false,
-    theme: "light" as "light" | "dark",
-    trackOffset: 0,
-    tickerZ: [] as number[],
+    gameOver: false,
   });
 
   useEffect(() => {
-    stateRef.current.theme = theme;
-  }, [theme]);
-
-  useEffect(() => {
-    const v = localStorage.getItem("rail-runner-best");
-    if (v) setBest(parseInt(v));
-    const t = localStorage.getItem("rail-runner-theme") as "light" | "dark" | null;
+    const b = localStorage.getItem("rail-rush-best");
+    if (b) setBest(parseInt(b));
+    const t = localStorage.getItem("rail-rush-theme") as "light" | "dark" | null;
     if (t) setTheme(t);
   }, []);
-
-  useEffect(() => {
-    localStorage.setItem("rail-runner-theme", theme);
-  }, [theme]);
-
-  const reset = useCallback(() => {
-    const s = stateRef.current;
-    s.lane = 1;
-    s.laneX = 0;
-    s.y = 0;
-    s.vy = 0;
-    s.sliding = 0;
-    s.speed = 18;
-    s.obstacles = [];
-    s.spawnCooldown = 1.2;
-    s.distance = 0;
-    s.trackOffset = 0;
-    s.tickerZ = [];
-    for (let i = 0; i < 40; i++) s.tickerZ.push((i / 40) * HORIZON_Z);
-    setScore(0);
-    setGameOver(false);
-  }, []);
+  useEffect(() => { localStorage.setItem("rail-rush-theme", theme); }, [theme]);
 
   const start = useCallback(() => {
-    reset();
-    setRunning(true);
-    stateRef.current.running = true;
-    stateRef.current.lastT = performance.now();
-  }, [reset]);
+    const s = stateRef.current;
+    s.lane = 0; s.laneX = 0; s.y = 0; s.vy = 0; s.slide = 0;
+    s.speed = 14; s.distance = 0; s.coins = 0;
+    s.obstacles = []; s.spawnTimer = 0.5; s.running = true; s.gameOver = false;
+    setScore(0); setCoins(0); setGameOver(false); setRunning(true);
+  }, []);
 
   const move = useCallback((dir: -1 | 1) => {
     const s = stateRef.current;
     if (!s.running) return;
-    s.lane = Math.max(0, Math.min(2, s.lane + dir)) as 0 | 1 | 2;
+    s.lane = Math.max(-1, Math.min(1, s.lane + dir)) as -1 | 0 | 1;
   }, []);
   const jump = useCallback(() => {
     const s = stateRef.current;
     if (!s.running) return;
-    if (s.y <= 0.01) s.vy = 9;
+    if (s.y <= 0.02) s.vy = 8.5;
   }, []);
   const slide = useCallback(() => {
     const s = stateRef.current;
     if (!s.running) return;
-    if (s.sliding <= 0) s.sliding = 0.7;
+    if (s.slide <= 0) s.slide = 0.7;
   }, []);
 
   useEffect(() => {
@@ -116,450 +87,665 @@ function Game() {
     return () => window.removeEventListener("keydown", onKey);
   }, [move, jump, slide]);
 
-  // Touch swipe
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    let sx = 0, sy = 0, active = false;
-    const onStart = (e: TouchEvent) => {
-      active = true;
-      sx = e.touches[0].clientX;
-      sy = e.touches[0].clientY;
-    };
-    const onEnd = (e: TouchEvent) => {
-      if (!active) return;
-      active = false;
-      const t = e.changedTouches[0];
-      const dx = t.clientX - sx;
-      const dy = t.clientY - sy;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        if (Math.abs(dx) > 30) move(dx > 0 ? 1 : -1);
-      } else {
-        if (Math.abs(dy) > 30) {
-          if (dy < 0) jump(); else slide();
-        }
-      }
-    };
-    canvas.addEventListener("touchstart", onStart, { passive: true });
-    canvas.addEventListener("touchend", onEnd, { passive: true });
-    return () => {
-      canvas.removeEventListener("touchstart", onStart);
-      canvas.removeEventListener("touchend", onEnd);
-    };
-  }, [move, jump, slide]);
+  // Swipe
+  const touchStart = useRef<{x:number;y:number}|null>(null);
+  const onTouchStart = (e: React.TouchEvent) => { touchStart.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (!touchStart.current) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - touchStart.current.x;
+    const dy = t.clientY - touchStart.current.y;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (Math.abs(dx) > 30) move(dx > 0 ? 1 : -1);
+    } else if (Math.abs(dy) > 30) {
+      if (dy < 0) jump(); else slide();
+    }
+    touchStart.current = null;
+  };
 
-  // Main loop
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d")!;
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    resize();
-    window.addEventListener("resize", resize);
-
-    let raf = 0;
-    const tick = (t: number) => {
-      raf = requestAnimationFrame(tick);
-      const s = stateRef.current;
-      const dt = Math.min(0.05, (t - s.lastT) / 1000);
-      s.lastT = t;
-
-      const w = canvas.clientWidth;
-      const h = canvas.clientHeight;
-
-      // Palette
-      const light = s.theme === "light";
-      const pal = light
-        ? {
-            skyTop: "#cfe7f5", skyBot: "#f5efe1", ground: "#b8ac8a", groundFar: "#d9cfae",
-            rail: "#6b6357", tie: "#5a4a34", ballast: "#8a8071",
-            player: "#e63946", playerDark: "#a3172a", shadow: "rgba(0,0,0,0.25)",
-            train: "#c94848", trainDark: "#7a2626", trainWin: "#1a2a3a",
-            barrier: "#f4a01e", barrierDark: "#a86a0f",
-            sign: "#2c3e50", signPost: "#5a5a5a",
-            hud: "#1a1a1a", hudBg: "rgba(255,255,255,0.75)",
-            lineMark: "#f2e6c9",
-          }
-        : {
-            skyTop: "#0a1420", skyBot: "#1a2436", ground: "#2a2620", groundFar: "#151210",
-            rail: "#9a9080", tie: "#3a2f22", ballast: "#3a342a",
-            player: "#ff5a6e", playerDark: "#8a1e2e", shadow: "rgba(0,0,0,0.55)",
-            train: "#d24a5a", trainDark: "#5a1a22", trainWin: "#7ec8ff",
-            barrier: "#ffb845", barrierDark: "#8a5a12",
-            sign: "#e8ecf1", signPost: "#7a7a7a",
-            hud: "#f5f5f5", hudBg: "rgba(10,15,25,0.7)",
-            lineMark: "#4a4230",
-          };
-
-      // Sky
-      const sky = ctx.createLinearGradient(0, 0, 0, h * 0.6);
-      sky.addColorStop(0, pal.skyTop);
-      sky.addColorStop(1, pal.skyBot);
-      ctx.fillStyle = sky;
-      ctx.fillRect(0, 0, w, h);
-
-      const horizonY = h * 0.45;
-
-      // Ground
-      const g = ctx.createLinearGradient(0, horizonY, 0, h);
-      g.addColorStop(0, pal.groundFar);
-      g.addColorStop(1, pal.ground);
-      ctx.fillStyle = g;
-      ctx.fillRect(0, horizonY, w, h - horizonY);
-
-      // Distant skyline
-      ctx.fillStyle = light ? "#9fb4c4" : "#0f1826";
-      const skylineOff = (s.distance * 0.5) % w;
-      for (let i = -1; i < 12; i++) {
-        const bx = i * 80 - skylineOff * 0.3;
-        const bh = 20 + ((i * 37) % 40);
-        ctx.fillRect(bx, horizonY - bh, 60, bh);
-      }
-
-      // Project 3D -> 2D
-      const project = (x: number, y: number, z: number) => {
-        const zz = z + 1;
-        const scale = FOCAL / zz;
-        const sxp = w / 2 + x * scale;
-        const syp = horizonY + (CAM_HEIGHT - y) * scale;
-        return { x: sxp, y: syp, scale };
-      };
-
-      if (s.running) {
-        s.distance += s.speed * dt;
-        s.speed = Math.min(38, s.speed + dt * 0.25);
-        s.trackOffset = (s.trackOffset + s.speed * dt) % 4;
-      }
-
-      // Smooth lane
-      const targetX = LANES[s.lane] * LANE_WIDTH;
-      s.laneX += (targetX - s.laneX) * Math.min(1, dt * 14);
-
-      // Physics
-      if (s.running) {
-        s.vy -= 22 * dt;
-        s.y = Math.max(0, s.y + s.vy * dt);
-        if (s.y === 0) s.vy = 0;
-        if (s.sliding > 0) s.sliding = Math.max(0, s.sliding - dt);
-      }
-
-      // Rails / ties
-      const drawTies = () => {
-        ctx.fillStyle = pal.ballast;
-        // ballast band
-        for (let lane of LANES) {
-          const zNear = 0.5, zFar = HORIZON_Z;
-          const nearL = project((lane - 0.5) * LANE_WIDTH, 0, zNear);
-          const nearR = project((lane + 0.5) * LANE_WIDTH, 0, zNear);
-          const farL = project((lane - 0.5) * LANE_WIDTH, 0, zFar);
-          const farR = project((lane + 0.5) * LANE_WIDTH, 0, zFar);
-          ctx.beginPath();
-          ctx.moveTo(nearL.x, nearL.y);
-          ctx.lineTo(nearR.x, nearR.y);
-          ctx.lineTo(farR.x, farR.y);
-          ctx.lineTo(farL.x, farL.y);
-          ctx.closePath();
-          ctx.fill();
-        }
-        // ties
-        for (let i = 0; i < 60; i++) {
-          const z = i * 1.5 + (4 - s.trackOffset);
-          if (z < 0.5 || z > HORIZON_Z) continue;
-          for (let lane of LANES) {
-            const l = project((lane - 0.45) * LANE_WIDTH, 0, z);
-            const r = project((lane + 0.45) * LANE_WIDTH, 0, z);
-            const thick = Math.max(1, 6 / (z + 1) * 4);
-            ctx.fillStyle = pal.tie;
-            ctx.fillRect(l.x, l.y - thick / 2, r.x - l.x, thick);
-          }
-        }
-        // rails
-        ctx.strokeStyle = pal.rail;
-        for (let lane of LANES) {
-          for (const off of [-0.35, 0.35]) {
-            ctx.beginPath();
-            for (let z = HORIZON_Z; z >= 0.5; z -= 1) {
-              const p = project(lane * LANE_WIDTH + off, 0, z);
-              const lw = Math.max(0.5, 3 / (z * 0.15 + 1));
-              ctx.lineWidth = lw;
-              if (z === HORIZON_Z) ctx.moveTo(p.x, p.y);
-              else ctx.lineTo(p.x, p.y);
-            }
-            ctx.stroke();
-          }
-        }
-      };
-      drawTies();
-
-      // Spawn obstacles (fewer trains)
-      if (s.running) {
-        s.spawnCooldown -= dt;
-        if (s.spawnCooldown <= 0) {
-          const r = Math.random();
-          const lane = Math.floor(Math.random() * 3) as 0 | 1 | 2;
-          let type: Obstacle["type"];
-          // Fewer trains: 20%, barriers 50%, signs 30%
-          if (r < 0.2) type = "train";
-          else if (r < 0.7) type = "barrier";
-          else type = "sign";
-          const length = type === "train" ? 8 + Math.random() * 6 : 1;
-          // Avoid two trains blocking all lanes: check last train
-          const recentTrains = s.obstacles.filter(o => o.type === "train" && o.z > HORIZON_Z - 20);
-          if (type === "train" && recentTrains.length >= 1) {
-            type = "barrier";
-          }
-          s.obstacles.push({ lane, z: HORIZON_Z, type, length });
-          s.spawnCooldown = type === "train" ? 2.2 + Math.random() * 1.5 : 1.0 + Math.random() * 1.2;
-        }
-
-        for (const o of s.obstacles) o.z -= s.speed * dt;
-        s.obstacles = s.obstacles.filter(o => o.z + o.length > -2);
-
-        // Collision
-        for (const o of s.obstacles) {
-          if (o.lane !== s.lane) continue;
-          const nearZ = o.z;
-          const farZ = o.z + o.length;
-          if (nearZ < 1.2 && farZ > 0.2) {
-            let hit = true;
-            if (o.type === "barrier" && s.y > 0.9) hit = false;
-            if (o.type === "sign" && s.sliding > 0) hit = false;
-            if (hit) {
-              s.running = false;
-              setRunning(false);
-              setGameOver(true);
-              const finalScore = Math.floor(s.distance);
-              setScore(finalScore);
-              if (finalScore > best) {
-                setBest(finalScore);
-                localStorage.setItem("rail-runner-best", String(finalScore));
-              }
-            }
-          }
-        }
-        setScore(Math.floor(s.distance));
-      }
-
-      // Draw obstacles (sorted far to near)
-      const sorted = [...s.obstacles].sort((a, b) => b.z - a.z);
-      for (const o of sorted) {
-        const laneX = LANES[o.lane] * LANE_WIDTH;
-        if (o.type === "train") {
-          // Train body
-          const zBack = o.z + o.length;
-          const zFront = Math.max(0.3, o.z);
-          const topY = 2.4;
-          const halfW = 0.55;
-          const p1 = project(laneX - halfW, topY, zFront);
-          const p2 = project(laneX + halfW, topY, zFront);
-          const p3 = project(laneX + halfW, 0, zFront);
-          const p4 = project(laneX - halfW, 0, zFront);
-          const b1 = project(laneX - halfW, topY, zBack);
-          const b2 = project(laneX + halfW, topY, zBack);
-          const b3 = project(laneX + halfW, 0, zBack);
-          const b4 = project(laneX - halfW, 0, zBack);
-          // Side
-          ctx.fillStyle = pal.trainDark;
-          ctx.beginPath();
-          ctx.moveTo(p2.x, p2.y); ctx.lineTo(b2.x, b2.y);
-          ctx.lineTo(b3.x, b3.y); ctx.lineTo(p3.x, p3.y);
-          ctx.closePath(); ctx.fill();
-          // Top
-          ctx.fillStyle = pal.train;
-          ctx.beginPath();
-          ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
-          ctx.lineTo(b2.x, b2.y); ctx.lineTo(b1.x, b1.y);
-          ctx.closePath(); ctx.fill();
-          // Front face
-          ctx.fillStyle = pal.train;
-          ctx.beginPath();
-          ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
-          ctx.lineTo(p3.x, p3.y); ctx.lineTo(p4.x, p4.y);
-          ctx.closePath(); ctx.fill();
-          // Windshield
-          ctx.fillStyle = pal.trainWin;
-          const wt = project(laneX - halfW * 0.7, topY * 0.85, zFront);
-          const wb = project(laneX + halfW * 0.7, topY * 0.5, zFront);
-          ctx.fillRect(wt.x, wt.y, wb.x - wt.x, wb.y - wt.y);
-          // Headlights
-          ctx.fillStyle = "#fff9c4";
-          const hl = project(laneX - halfW * 0.5, 0.6, zFront);
-          const hr = project(laneX + halfW * 0.5, 0.6, zFront);
-          const hs = Math.max(2, 8 / (zFront + 1) * 3);
-          ctx.beginPath(); ctx.arc(hl.x, hl.y, hs, 0, Math.PI * 2); ctx.fill();
-          ctx.beginPath(); ctx.arc(hr.x, hr.y, hs, 0, Math.PI * 2); ctx.fill();
-        } else if (o.type === "barrier") {
-          const z = Math.max(0.3, o.z);
-          const halfW = 0.55;
-          const topY = 0.9;
-          const p1 = project(laneX - halfW, topY, z);
-          const p2 = project(laneX + halfW, topY, z);
-          const p3 = project(laneX + halfW, 0, z);
-          const p4 = project(laneX - halfW, 0, z);
-          ctx.fillStyle = pal.barrier;
-          ctx.beginPath();
-          ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
-          ctx.lineTo(p3.x, p3.y); ctx.lineTo(p4.x, p4.y);
-          ctx.closePath(); ctx.fill();
-          // stripes
-          ctx.fillStyle = pal.barrierDark;
-          const stripeH = (p3.y - p1.y) / 4;
-          for (let i = 0; i < 4; i += 2) {
-            ctx.fillRect(p1.x, p1.y + i * stripeH, p2.x - p1.x, stripeH);
-          }
-        } else {
-          // sign (overhead — must slide)
-          const z = Math.max(0.3, o.z);
-          const halfW = 0.55;
-          const yTop = 2.6;
-          const yBot = 1.6;
-          const p1 = project(laneX - halfW, yTop, z);
-          const p2 = project(laneX + halfW, yTop, z);
-          const p3 = project(laneX + halfW, yBot, z);
-          const p4 = project(laneX - halfW, yBot, z);
-          // posts
-          ctx.strokeStyle = pal.signPost;
-          ctx.lineWidth = Math.max(1, 4 / (z + 1) * 3);
-          const post1t = project(laneX - halfW, yBot, z);
-          const post1b = project(laneX - halfW, 0, z);
-          const post2t = project(laneX + halfW, yBot, z);
-          const post2b = project(laneX + halfW, 0, z);
-          ctx.beginPath();
-          ctx.moveTo(post1t.x, post1t.y); ctx.lineTo(post1b.x, post1b.y);
-          ctx.moveTo(post2t.x, post2t.y); ctx.lineTo(post2b.x, post2b.y);
-          ctx.stroke();
-          // sign panel
-          ctx.fillStyle = pal.sign;
-          ctx.beginPath();
-          ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
-          ctx.lineTo(p3.x, p3.y); ctx.lineTo(p4.x, p4.y);
-          ctx.closePath(); ctx.fill();
-        }
-      }
-
-      // Player
-      {
-        const px = s.laneX;
-        const pz = 0.9;
-        const py = s.y;
-        const sliding = s.sliding > 0;
-        const hHeight = sliding ? 0.9 : 1.7;
-        const halfW = 0.32;
-        // shadow
-        const shBase = project(px, 0, pz);
-        const shR = project(px + halfW, 0, pz);
-        ctx.fillStyle = pal.shadow;
-        ctx.beginPath();
-        ctx.ellipse(shBase.x, shBase.y + 4, (shR.x - shBase.x) * 1.1, 6, 0, 0, Math.PI * 2);
-        ctx.fill();
-        // body
-        const t1 = project(px - halfW, py + hHeight, pz);
-        const t2 = project(px + halfW, py + hHeight, pz);
-        const b1 = project(px - halfW, py, pz);
-        const b2 = project(px + halfW, py, pz);
-        ctx.fillStyle = pal.player;
-        ctx.beginPath();
-        ctx.moveTo(t1.x, t1.y); ctx.lineTo(t2.x, t2.y);
-        ctx.lineTo(b2.x, b2.y); ctx.lineTo(b1.x, b1.y);
-        ctx.closePath(); ctx.fill();
-        // head
-        if (!sliding) {
-          const head = project(px, py + hHeight + 0.35, pz);
-          const hr = (t2.x - t1.x) * 0.32;
-          ctx.fillStyle = pal.playerDark;
-          ctx.beginPath(); ctx.arc(head.x, head.y, hr, 0, Math.PI * 2); ctx.fill();
-        }
-      }
-
-      // HUD overlay drawn via DOM
-    };
-    raf = requestAnimationFrame(tick);
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
-    };
+  const onEnd = useCallback((finalDist: number, finalCoins: number) => {
+    setRunning(false); setGameOver(true);
+    setScore(finalDist); setCoins(finalCoins);
+    if (finalDist > best) { setBest(finalDist); localStorage.setItem("rail-rush-best", String(finalDist)); }
   }, [best]);
 
+  const isDark = theme === "dark";
+
   return (
-    <div className={`min-h-screen ${theme === "dark" ? "dark" : ""}`}>
-      <div className="relative min-h-screen bg-background text-foreground">
-        <div className="absolute inset-0">
-          <canvas ref={canvasRef} className="h-screen w-full block" />
-        </div>
+    <div className={isDark ? "dark" : ""}>
+      <div
+        className="relative h-screen w-screen overflow-hidden bg-background text-foreground"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+      >
+        <Canvas shadows dpr={[1, 2]} camera={{ position: [0, 4.2, 7], fov: 55 }}>
+          <Suspense fallback={null}>
+            <Scene
+              stateRef={stateRef}
+              theme={theme}
+              onScoreUpdate={(d, c) => { setScore(d); setCoins(c); }}
+              onEnd={onEnd}
+            />
+          </Suspense>
+        </Canvas>
 
         {/* HUD */}
         <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-4">
-          <div className="pointer-events-auto rounded-xl bg-card/80 backdrop-blur px-4 py-2 shadow-sm border">
-            <div className="text-xs uppercase tracking-widest text-muted-foreground">Score</div>
-            <div className="text-2xl font-bold tabular-nums">{score}m</div>
-            <div className="text-[10px] text-muted-foreground">Best {best}m</div>
+          <div className="pointer-events-auto rounded-2xl bg-card/85 backdrop-blur px-4 py-2 shadow-sm border">
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Distance</div>
+            <div className="text-2xl font-bold tabular-nums leading-none">{score}<span className="text-sm font-medium text-muted-foreground">m</span></div>
+            <div className="mt-1 text-[10px] text-muted-foreground">Best {best}m</div>
+          </div>
+          <div className="pointer-events-auto rounded-2xl bg-card/85 backdrop-blur px-4 py-2 shadow-sm border flex items-center gap-2">
+            <span className="inline-block h-4 w-4 rounded-full bg-yellow-400 shadow-inner shadow-yellow-600" />
+            <span className="text-xl font-bold tabular-nums">{coins}</span>
           </div>
           <button
-            onClick={() => setTheme(theme === "light" ? "dark" : "light")}
-            className="pointer-events-auto rounded-full bg-card/80 backdrop-blur border px-3 py-2 text-sm shadow-sm hover:bg-accent transition"
-            aria-label="Toggle theme"
+            onClick={() => setTheme(isDark ? "light" : "dark")}
+            className="pointer-events-auto rounded-full bg-card/85 backdrop-blur border px-3 py-2 text-sm shadow-sm hover:bg-accent transition"
           >
-            {theme === "light" ? "🌙 Dark" : "☀️ Light"}
+            {isDark ? "☀️ Light" : "🌙 Dark"}
           </button>
         </div>
 
-        {/* Controls hint */}
         {running && (
-          <div className="pointer-events-none absolute bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-card/70 backdrop-blur border px-4 py-1.5 text-xs text-muted-foreground">
-            ← → move · ↑ jump · ↓ slide · (swipe on mobile)
-          </div>
+          <>
+            <div className="pointer-events-none absolute bottom-24 md:bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-card/70 backdrop-blur border px-4 py-1.5 text-xs text-muted-foreground">
+              ← → move · ↑ jump · ↓ slide · swipe on mobile
+            </div>
+            <div className="absolute bottom-6 inset-x-0 flex justify-center gap-3 md:hidden">
+              <button onClick={() => move(-1)} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">←</button>
+              <button onClick={jump} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">↑</button>
+              <button onClick={slide} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">↓</button>
+              <button onClick={() => move(1)} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">→</button>
+            </div>
+          </>
         )}
 
-        {/* Mobile buttons */}
-        {running && (
-          <div className="absolute bottom-6 inset-x-0 flex justify-center gap-3 md:hidden">
-            <button onClick={() => move(-1)} className="pointer-events-auto h-14 w-14 rounded-full bg-card/80 backdrop-blur border text-xl shadow">←</button>
-            <button onClick={jump} className="pointer-events-auto h-14 w-14 rounded-full bg-card/80 backdrop-blur border text-xl shadow">↑</button>
-            <button onClick={slide} className="pointer-events-auto h-14 w-14 rounded-full bg-card/80 backdrop-blur border text-xl shadow">↓</button>
-            <button onClick={() => move(1)} className="pointer-events-auto h-14 w-14 rounded-full bg-card/80 backdrop-blur border text-xl shadow">→</button>
-          </div>
-        )}
-
-        {/* Start / Game over overlay */}
         {!running && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/40 backdrop-blur-sm">
-            <div className="max-w-md text-center rounded-2xl border bg-card/90 shadow-lg p-8 mx-4">
-              <h1 className="text-3xl font-bold tracking-tight">Rail Runner</h1>
+          <div className="absolute inset-0 flex items-center justify-center bg-background/50 backdrop-blur-sm">
+            <div className="max-w-md text-center rounded-3xl border bg-card/95 shadow-xl p-8 mx-4">
+              <h1 className="text-4xl font-black tracking-tight">Rail Rush</h1>
               <p className="mt-2 text-sm text-muted-foreground">
-                {gameOver ? "You crashed!" : "Dodge trains. Jump barriers. Slide under signs."}
+                {gameOver ? "You crashed!" : "3D subway runner. Grab coins. Dodge trains."}
               </p>
               {gameOver && (
-                <div className="mt-4 grid grid-cols-2 gap-3">
-                  <div className="rounded-lg bg-muted p-3">
-                    <div className="text-xs text-muted-foreground">Score</div>
-                    <div className="text-xl font-bold">{score}m</div>
-                  </div>
-                  <div className="rounded-lg bg-muted p-3">
-                    <div className="text-xs text-muted-foreground">Best</div>
-                    <div className="text-xl font-bold">{best}m</div>
-                  </div>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <Stat label="Score" value={`${score}m`} />
+                  <Stat label="Coins" value={String(coins)} />
+                  <Stat label="Best" value={`${best}m`} />
                 </div>
               )}
               <button
                 onClick={start}
-                className="mt-6 inline-flex items-center justify-center rounded-full bg-primary px-6 py-3 text-sm font-semibold text-primary-foreground shadow hover:bg-primary/90 transition"
+                className="mt-6 inline-flex items-center justify-center rounded-full bg-primary px-8 py-3 text-sm font-semibold text-primary-foreground shadow-lg hover:bg-primary/90 transition"
               >
                 {gameOver ? "Play again" : "Start running"}
               </button>
               <div className="mt-4 text-[11px] text-muted-foreground">
-                Keys: ← → ↑ ↓ · Space to jump
+                Arrows / WASD · Space to jump
               </div>
             </div>
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg bg-muted p-2">
+      <div className="text-[10px] uppercase text-muted-foreground">{label}</div>
+      <div className="text-base font-bold">{value}</div>
+    </div>
+  );
+}
+
+// ============ 3D SCENE ============
+
+function Scene({
+  stateRef, theme, onScoreUpdate, onEnd,
+}: {
+  stateRef: React.MutableRefObject<any>;
+  theme: "light" | "dark";
+  onScoreUpdate: (d: number, c: number) => void;
+  onEnd: (d: number, c: number) => void;
+}) {
+  const { scene } = useThree();
+  const isDark = theme === "dark";
+
+  useEffect(() => {
+    const bg = isDark ? "#0a1628" : "#bfe0f2";
+    scene.background = new THREE.Color(bg);
+    scene.fog = new THREE.Fog(bg, 25, 90);
+  }, [scene, isDark]);
+
+  return (
+    <>
+      <hemisphereLight args={[isDark ? "#3a4a6a" : "#ffffff", isDark ? "#0a0a10" : "#8a7f6a", isDark ? 0.4 : 0.9]} />
+      <directionalLight
+        position={[8, 15, 6]}
+        intensity={isDark ? 0.6 : 1.4}
+        color={isDark ? "#a8c0ff" : "#fff4dc"}
+        castShadow
+        shadow-mapSize={[1024, 1024]}
+        shadow-camera-left={-15}
+        shadow-camera-right={15}
+        shadow-camera-top={15}
+        shadow-camera-bottom={-15}
+      />
+      <World stateRef={stateRef} theme={theme} onScoreUpdate={onScoreUpdate} onEnd={onEnd} />
+    </>
+  );
+}
+
+function World({
+  stateRef, theme, onScoreUpdate, onEnd,
+}: {
+  stateRef: React.MutableRefObject<any>;
+  theme: "light" | "dark";
+  onScoreUpdate: (d: number, c: number) => void;
+  onEnd: (d: number, c: number) => void;
+}) {
+  const isDark = theme === "dark";
+  const groupRef = useRef<THREE.Group>(null!);
+  const playerRef = useRef<THREE.Group>(null!);
+  const [, force] = useState(0);
+  const uiTimer = useRef(0);
+  const runFrame = useRef(0);
+
+  // Repeating track segments
+  const segments = useMemo(() => Array.from({ length: 12 }, (_, i) => i * -12), []);
+  const segRefs = useRef<THREE.Group[]>([]);
+
+  // Clouds
+  const clouds = useMemo(() => Array.from({ length: 14 }, (_, i) => ({
+    x: (Math.random() - 0.5) * 60,
+    y: 10 + Math.random() * 6,
+    z: -i * 10 - Math.random() * 20,
+    s: 1 + Math.random() * 1.5,
+  })), []);
+  const cloudRefs = useRef<THREE.Group[]>([]);
+
+  useFrame((_, dt) => {
+    const s = stateRef.current;
+    const clamped = Math.min(dt, 0.05);
+
+    // Player smooth lane
+    const targetX = s.lane * LANE_X;
+    s.laneX += (targetX - s.laneX) * Math.min(1, clamped * 14);
+
+    // Physics
+    if (s.running) {
+      s.distance += s.speed * clamped;
+      s.speed = Math.min(30, s.speed + clamped * 0.2);
+      s.vy -= 20 * clamped;
+      s.y = Math.max(0, s.y + s.vy * clamped);
+      if (s.y === 0) s.vy = 0;
+      if (s.slide > 0) s.slide = Math.max(0, s.slide - clamped);
+    }
+
+    // Move segments toward camera
+    segRefs.current.forEach((g) => {
+      if (!g) return;
+      if (s.running) g.position.z += s.speed * clamped;
+      if (g.position.z > 6) g.position.z -= 12 * segments.length;
+    });
+
+    // Clouds drift
+    cloudRefs.current.forEach((g) => {
+      if (!g) return;
+      if (s.running) g.position.z += s.speed * 0.3 * clamped;
+      if (g.position.z > 15) g.position.z -= 140;
+    });
+
+    // Spawn
+    if (s.running) {
+      s.spawnTimer -= clamped;
+      if (s.spawnTimer <= 0) {
+        const r = Math.random();
+        const lane = (Math.floor(Math.random() * 3) - 1) as -1 | 0 | 1;
+        let type: ObType;
+        if (r < 0.15) type = "train";
+        else if (r < 0.4) type = "barrier";
+        else if (r < 0.55) type = "sign";
+        else type = "coin";
+
+        // Don't stack trains close together
+        if (type === "train") {
+          const recent = s.obstacles.filter((o: Ob) => o.type === "train" && o.z < -70);
+          if (recent.length >= 1) type = "coin";
+        }
+
+        const length = type === "train" ? 10 + Math.random() * 4 : type === "coin" ? 6 : 1;
+
+        if (type === "coin") {
+          // spawn a line of coins
+          const baseZ = SPAWN_Z;
+          for (let i = 0; i < 5; i++) {
+            s.obstacles.push({ id: s.nextId++, lane, z: baseZ - i * 1.2, type: "coin", length: 0.5 });
+          }
+        } else {
+          s.obstacles.push({ id: s.nextId++, lane, z: SPAWN_Z, type, length });
+        }
+        s.spawnTimer = type === "train" ? 2.0 + Math.random() * 1.2 : 0.8 + Math.random() * 0.8;
+      }
+
+      for (const o of s.obstacles) o.z += s.speed * clamped;
+
+      // Collision detection
+      const px = s.laneX;
+      const py = s.y;
+      for (const o of s.obstacles) {
+        if (o.collected) continue;
+        const ox = o.lane * LANE_X;
+        if (Math.abs(ox - px) > 1.1 && o.type !== "coin") continue;
+        // z range of object: from (o.z - o.length) back to o.z (front)
+        const zBack = o.z - o.length;
+        const zFront = o.z;
+        const playerZ = 0;
+        if (playerZ >= zBack - 0.4 && playerZ <= zFront + 0.4) {
+          if (o.type === "coin") {
+            if (Math.abs(ox - px) < 0.9 && Math.abs(o.z - playerZ) < 0.8 && py < 1.6) {
+              o.collected = true;
+              s.coins += 1;
+            }
+          } else if (o.type === "barrier") {
+            if (Math.abs(ox - px) < 1.0 && py < 0.9) crash(s);
+          } else if (o.type === "sign") {
+            if (Math.abs(ox - px) < 1.0 && s.slide <= 0 && py < 1.3) crash(s);
+          } else if (o.type === "train") {
+            if (Math.abs(ox - px) < 1.0) crash(s);
+          }
+        }
+      }
+
+      // Remove far-behind
+      s.obstacles = s.obstacles.filter((o: Ob) => o.z < DESPAWN_Z && !(o.collected && o.z > 2));
+
+      if (s.gameOver) {
+        onEnd(Math.floor(s.distance), s.coins);
+        s.gameOver = false;
+      }
+    }
+
+    // Player animation & pose
+    if (playerRef.current) {
+      playerRef.current.position.x = s.laneX;
+      playerRef.current.position.y = s.y + (s.slide > 0 ? -0.3 : 0);
+      playerRef.current.rotation.x = s.slide > 0 ? -0.5 : 0;
+      playerRef.current.scale.y = s.slide > 0 ? 0.55 : 1;
+      // Running arm/leg swing
+      if (s.running) runFrame.current += clamped * s.speed * 0.7;
+      const swing = Math.sin(runFrame.current * 2) * (s.y > 0.05 ? 0.3 : 1);
+      const legL = playerRef.current.getObjectByName("legL") as THREE.Mesh | null;
+      const legR = playerRef.current.getObjectByName("legR") as THREE.Mesh | null;
+      const armL = playerRef.current.getObjectByName("armL") as THREE.Mesh | null;
+      const armR = playerRef.current.getObjectByName("armR") as THREE.Mesh | null;
+      if (legL && legR && armL && armR) {
+        legL.rotation.x = swing * 0.9;
+        legR.rotation.x = -swing * 0.9;
+        armL.rotation.x = -swing * 0.9;
+        armR.rotation.x = swing * 0.9;
+      }
+    }
+
+    // HUD throttled
+    uiTimer.current += clamped;
+    if (uiTimer.current > 0.1) {
+      uiTimer.current = 0;
+      onScoreUpdate(Math.floor(s.distance), s.coins);
+      force((x) => x + 1); // re-render obstacles list
+    }
+  });
+
+  const s = stateRef.current;
+
+  return (
+    <group ref={groupRef}>
+      {/* Sky dome color already via scene.background */}
+
+      {/* Clouds */}
+      {clouds.map((c, i) => (
+        <group
+          key={i}
+          ref={(el) => { if (el) cloudRefs.current[i] = el; }}
+          position={[c.x, c.y, c.z]}
+          scale={c.s}
+        >
+          <Cloud dark={isDark} />
+        </group>
+      ))}
+
+      {/* Distant buildings */}
+      <Skyline dark={isDark} />
+
+      {/* Track segments */}
+      {segments.map((z, i) => (
+        <group
+          key={i}
+          ref={(el) => { if (el) segRefs.current[i] = el; }}
+          position={[0, 0, z]}
+        >
+          <TrackSegment dark={isDark} />
+        </group>
+      ))}
+
+      {/* Obstacles */}
+      {s.obstacles.map((o: Ob) => (
+        <ObstacleMesh key={o.id} ob={o} dark={isDark} />
+      ))}
+
+      {/* Player */}
+      <group ref={playerRef} position={[0, 0, 0]}>
+        <Character dark={isDark} />
+      </group>
+    </group>
+  );
+}
+
+function crash(s: any) {
+  if (!s.running) return;
+  s.running = false;
+  s.gameOver = true;
+}
+
+// ============ 3D COMPONENTS ============
+
+function Character({ dark }: { dark: boolean }) {
+  const shirt = "#e63946";
+  const pants = "#1a2a44";
+  const skin = "#f2c9a4";
+  const hair = "#2b1d14";
+  const shoe = "#111";
+  return (
+    <group castShadow>
+      {/* Legs */}
+      <mesh name="legL" position={[-0.18, 0.45, 0]} castShadow>
+        <boxGeometry args={[0.28, 0.9, 0.28]} />
+        <meshStandardMaterial color={pants} />
+      </mesh>
+      <mesh name="legR" position={[0.18, 0.45, 0]} castShadow>
+        <boxGeometry args={[0.28, 0.9, 0.28]} />
+        <meshStandardMaterial color={pants} />
+      </mesh>
+      {/* Shoes */}
+      <mesh position={[-0.18, 0.05, 0.08]} castShadow>
+        <boxGeometry args={[0.32, 0.15, 0.5]} />
+        <meshStandardMaterial color={shoe} />
+      </mesh>
+      <mesh position={[0.18, 0.05, 0.08]} castShadow>
+        <boxGeometry args={[0.32, 0.15, 0.5]} />
+        <meshStandardMaterial color={shoe} />
+      </mesh>
+      {/* Torso */}
+      <mesh position={[0, 1.2, 0]} castShadow>
+        <boxGeometry args={[0.7, 0.85, 0.4]} />
+        <meshStandardMaterial color={shirt} />
+      </mesh>
+      {/* Hood/backpack */}
+      <mesh position={[0, 1.2, -0.28]} castShadow>
+        <boxGeometry args={[0.55, 0.6, 0.25]} />
+        <meshStandardMaterial color="#f4a01e" />
+      </mesh>
+      {/* Arms */}
+      <mesh name="armL" position={[-0.48, 1.35, 0]} castShadow>
+        <boxGeometry args={[0.22, 0.75, 0.22]} />
+        <meshStandardMaterial color={shirt} />
+      </mesh>
+      <mesh name="armR" position={[0.48, 1.35, 0]} castShadow>
+        <boxGeometry args={[0.22, 0.75, 0.22]} />
+        <meshStandardMaterial color={shirt} />
+      </mesh>
+      {/* Head */}
+      <mesh position={[0, 1.85, 0]} castShadow>
+        <boxGeometry args={[0.5, 0.5, 0.5]} />
+        <meshStandardMaterial color={skin} />
+      </mesh>
+      {/* Hair / cap */}
+      <mesh position={[0, 2.13, -0.02]} castShadow>
+        <boxGeometry args={[0.55, 0.15, 0.55]} />
+        <meshStandardMaterial color={hair} />
+      </mesh>
+      {/* Eyes */}
+      <mesh position={[-0.12, 1.88, 0.26]}>
+        <boxGeometry args={[0.08, 0.08, 0.02]} />
+        <meshStandardMaterial color="#fff" />
+      </mesh>
+      <mesh position={[0.12, 1.88, 0.26]}>
+        <boxGeometry args={[0.08, 0.08, 0.02]} />
+        <meshStandardMaterial color="#fff" />
+      </mesh>
+      <mesh position={[-0.12, 1.88, 0.27]}>
+        <boxGeometry args={[0.04, 0.04, 0.02]} />
+        <meshStandardMaterial color="#111" />
+      </mesh>
+      <mesh position={[0.12, 1.88, 0.27]}>
+        <boxGeometry args={[0.04, 0.04, 0.02]} />
+        <meshStandardMaterial color="#111" />
+      </mesh>
+    </group>
+  );
+}
+
+function TrackSegment({ dark }: { dark: boolean }) {
+  // 12 units long segment
+  const ballastColor = dark ? "#2a251d" : "#8a8071";
+  const groundColor = dark ? "#1a1a20" : "#b8ac8a";
+  const tieColor = dark ? "#231a10" : "#5a4a34";
+  const railColor = dark ? "#9a9080" : "#6b6357";
+  const grassColor = dark ? "#12281a" : "#7ea15c";
+
+  const ties = useMemo(() => {
+    const arr: number[] = [];
+    for (let i = 0; i < 16; i++) arr.push(-i * 0.75);
+    return arr;
+  }, []);
+
+  return (
+    <group>
+      {/* Grass sides */}
+      <mesh position={[-8, -0.02, -6]} receiveShadow>
+        <boxGeometry args={[10, 0.05, 12]} />
+        <meshStandardMaterial color={grassColor} />
+      </mesh>
+      <mesh position={[8, -0.02, -6]} receiveShadow>
+        <boxGeometry args={[10, 0.05, 12]} />
+        <meshStandardMaterial color={grassColor} />
+      </mesh>
+      {/* Track base */}
+      <mesh position={[0, -0.03, -6]} receiveShadow>
+        <boxGeometry args={[6, 0.05, 12]} />
+        <meshStandardMaterial color={ballastColor} />
+      </mesh>
+      {/* Lane dividers (subtle) */}
+      <mesh position={[0, 0.001, -6]} receiveShadow>
+        <boxGeometry args={[5.4, 0.001, 12]} />
+        <meshStandardMaterial color={groundColor} />
+      </mesh>
+
+      {/* Ties */}
+      {ties.map((z, i) => (
+        <mesh key={i} position={[0, 0.02, z]} receiveShadow>
+          <boxGeometry args={[5.4, 0.06, 0.35]} />
+          <meshStandardMaterial color={tieColor} />
+        </mesh>
+      ))}
+
+      {/* Rails - 3 lanes, 2 rails each */}
+      {[-1, 0, 1].map((lane) => (
+        <group key={lane} position={[lane * LANE_X, 0, 0]}>
+          <mesh position={[-0.6, 0.08, -6]} castShadow>
+            <boxGeometry args={[0.08, 0.1, 12]} />
+            <meshStandardMaterial color={railColor} metalness={0.7} roughness={0.3} />
+          </mesh>
+          <mesh position={[0.6, 0.08, -6]} castShadow>
+            <boxGeometry args={[0.08, 0.1, 12]} />
+            <meshStandardMaterial color={railColor} metalness={0.7} roughness={0.3} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* Side lampposts every segment */}
+      <Lamp x={-4.5} dark={dark} />
+      <Lamp x={4.5} dark={dark} />
+    </group>
+  );
+}
+
+function Lamp({ x, dark }: { x: number; dark: boolean }) {
+  return (
+    <group position={[x, 0, -6]}>
+      <mesh position={[0, 1.5, 0]} castShadow>
+        <cylinderGeometry args={[0.06, 0.06, 3, 8]} />
+        <meshStandardMaterial color="#3a3a3a" />
+      </mesh>
+      <mesh position={[Math.sign(-x) * 0.4, 3, 0]} castShadow>
+        <boxGeometry args={[0.8, 0.1, 0.3]} />
+        <meshStandardMaterial color="#3a3a3a" />
+      </mesh>
+      <mesh position={[Math.sign(-x) * 0.6, 2.9, 0]}>
+        <sphereGeometry args={[0.15, 12, 12]} />
+        <meshStandardMaterial
+          color={dark ? "#fff4b0" : "#fff8dc"}
+          emissive={dark ? "#ffcc44" : "#000"}
+          emissiveIntensity={dark ? 1 : 0}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function Cloud({ dark }: { dark: boolean }) {
+  const color = dark ? "#3a4a68" : "#ffffff";
+  return (
+    <group>
+      <mesh>
+        <sphereGeometry args={[1.4, 12, 12]} />
+        <meshStandardMaterial color={color} roughness={1} />
+      </mesh>
+      <mesh position={[1.2, 0.2, 0]}>
+        <sphereGeometry args={[1.1, 12, 12]} />
+        <meshStandardMaterial color={color} roughness={1} />
+      </mesh>
+      <mesh position={[-1.2, 0.1, 0]}>
+        <sphereGeometry args={[1, 12, 12]} />
+        <meshStandardMaterial color={color} roughness={1} />
+      </mesh>
+      <mesh position={[0.4, 0.7, 0.2]}>
+        <sphereGeometry args={[0.9, 12, 12]} />
+        <meshStandardMaterial color={color} roughness={1} />
+      </mesh>
+    </group>
+  );
+}
+
+function Skyline({ dark }: { dark: boolean }) {
+  const buildings = useMemo(() => Array.from({ length: 40 }, (_, i) => ({
+    x: (i - 20) * 4 + (Math.random() - 0.5) * 2,
+    h: 3 + Math.random() * 8,
+    w: 2 + Math.random() * 2,
+    side: i % 2 === 0 ? -1 : 1,
+  })), []);
+  return (
+    <group position={[0, 0, -80]}>
+      {buildings.map((b, i) => (
+        <mesh key={i} position={[b.x + b.side * 12, b.h / 2, 0]}>
+          <boxGeometry args={[b.w, b.h, 2]} />
+          <meshStandardMaterial color={dark ? "#0e1a2c" : "#8fa3b8"} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+function ObstacleMesh({ ob, dark }: { ob: Ob; dark: boolean }) {
+  const x = ob.lane * LANE_X;
+  if (ob.collected) return null;
+
+  if (ob.type === "train") {
+    return (
+      <group position={[x, 0, ob.z - ob.length / 2]}>
+        {/* Body */}
+        <mesh position={[0, 1.2, 0]} castShadow>
+          <boxGeometry args={[1.4, 2.4, ob.length]} />
+          <meshStandardMaterial color="#c94848" metalness={0.4} roughness={0.5} />
+        </mesh>
+        {/* Roof */}
+        <mesh position={[0, 2.45, 0]} castShadow>
+          <boxGeometry args={[1.5, 0.1, ob.length + 0.1]} />
+          <meshStandardMaterial color="#7a2626" />
+        </mesh>
+        {/* Windows strip */}
+        <mesh position={[0.71, 1.6, 0]}>
+          <boxGeometry args={[0.02, 0.5, ob.length * 0.85]} />
+          <meshStandardMaterial color={dark ? "#7ec8ff" : "#1a2a3a"} emissive={dark ? "#3a6a99" : "#000"} emissiveIntensity={dark ? 0.6 : 0} />
+        </mesh>
+        <mesh position={[-0.71, 1.6, 0]}>
+          <boxGeometry args={[0.02, 0.5, ob.length * 0.85]} />
+          <meshStandardMaterial color={dark ? "#7ec8ff" : "#1a2a3a"} emissive={dark ? "#3a6a99" : "#000"} emissiveIntensity={dark ? 0.6 : 0} />
+        </mesh>
+        {/* Front face */}
+        <mesh position={[0, 1.2, ob.length / 2 + 0.01]}>
+          <boxGeometry args={[1.35, 2.3, 0.05]} />
+          <meshStandardMaterial color="#a03030" />
+        </mesh>
+        {/* Headlights */}
+        <mesh position={[-0.4, 0.7, ob.length / 2 + 0.06]}>
+          <sphereGeometry args={[0.12, 10, 10]} />
+          <meshStandardMaterial color="#fff9c4" emissive="#ffee88" emissiveIntensity={1.5} />
+        </mesh>
+        <mesh position={[0.4, 0.7, ob.length / 2 + 0.06]}>
+          <sphereGeometry args={[0.12, 10, 10]} />
+          <meshStandardMaterial color="#fff9c4" emissive="#ffee88" emissiveIntensity={1.5} />
+        </mesh>
+      </group>
+    );
+  }
+  if (ob.type === "barrier") {
+    return (
+      <group position={[x, 0, ob.z]}>
+        <mesh position={[0, 0.4, 0]} castShadow>
+          <boxGeometry args={[1.4, 0.8, 0.4]} />
+          <meshStandardMaterial color="#f4a01e" />
+        </mesh>
+        <mesh position={[0, 0.6, 0.01]}>
+          <boxGeometry args={[1.42, 0.15, 0.42]} />
+          <meshStandardMaterial color="#1a1a1a" />
+        </mesh>
+        <mesh position={[0, 0.2, 0.01]}>
+          <boxGeometry args={[1.42, 0.15, 0.42]} />
+          <meshStandardMaterial color="#1a1a1a" />
+        </mesh>
+      </group>
+    );
+  }
+  if (ob.type === "sign") {
+    return (
+      <group position={[x, 0, ob.z]}>
+        <mesh position={[-0.7, 1.2, 0]} castShadow>
+          <cylinderGeometry args={[0.06, 0.06, 2.4, 8]} />
+          <meshStandardMaterial color="#5a5a5a" />
+        </mesh>
+        <mesh position={[0.7, 1.2, 0]} castShadow>
+          <cylinderGeometry args={[0.06, 0.06, 2.4, 8]} />
+          <meshStandardMaterial color="#5a5a5a" />
+        </mesh>
+        <mesh position={[0, 2.1, 0]} castShadow>
+          <boxGeometry args={[1.6, 0.6, 0.12]} />
+          <meshStandardMaterial color={dark ? "#e8ecf1" : "#2c3e50"} />
+        </mesh>
+      </group>
+    );
+  }
+  // coin
+  return (
+    <group position={[x, 1.1, ob.z]}>
+      <mesh rotation={[Math.PI / 2, 0, 0]} castShadow>
+        <cylinderGeometry args={[0.3, 0.3, 0.08, 16]} />
+        <meshStandardMaterial color="#f7cf3d" emissive="#8a6a10" emissiveIntensity={0.3} metalness={0.8} roughness={0.3} />
+      </mesh>
+    </group>
   );
 }
