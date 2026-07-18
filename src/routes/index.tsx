@@ -133,10 +133,20 @@ function Page() {
   };
 
   const onEnd = useCallback((finalDist: number, finalCoins: number) => {
+    const finalPoints = finalDist + finalCoins * COIN_VALUE;
     setRunning(false); setGameOver(true);
     setScore(finalDist); setCoins(finalCoins);
-    if (finalDist > best) { setBest(finalDist); localStorage.setItem("rail-rush-best", String(finalDist)); }
+    if (finalPoints > best) { setBest(finalPoints); localStorage.setItem("rail-rush-best", String(finalPoints)); }
   }, [best]);
+
+  const handleScoreUpdate = useCallback((d: number, c: number) => {
+    setScore(d);
+    if (c > coinsRef.current) {
+      coinsRef.current = c;
+      setPickupFlash((f) => f + 1);
+    }
+    setCoins(c);
+  }, []);
 
   const isDark = theme === "dark";
 
