@@ -68,6 +68,7 @@ function Page() {
     s.speed = 14; s.distance = 0; s.coins = 0;
     s.obstacles = []; s.spawnTimer = 0.5; s.running = true; s.gameOver = false;
     s.grounded = true; s.coyote = 0; s.jumpBuffer = 0; s.jumpHeld = false; s.jumpsUsed = 0;
+    coinsRef.current = 0;
     setScore(0); setCoins(0); setGameOver(false); setRunning(true);
   }, []);
 
