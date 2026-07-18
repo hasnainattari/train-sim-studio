@@ -42,6 +42,12 @@ function Page() {
     nextId: 1,
     running: false,
     gameOver: false,
+    // Jump physics
+    grounded: true,
+    coyote: 0,        // time since leaving ground where jump still allowed
+    jumpBuffer: 0,    // buffered jump input if pressed just before landing
+    jumpHeld: false,  // for variable jump height
+    jumpsUsed: 0,     // for double jump
   });
 
   useEffect(() => {
@@ -57,6 +63,7 @@ function Page() {
     s.lane = 0; s.laneX = 0; s.y = 0; s.vy = 0; s.slide = 0;
     s.speed = 14; s.distance = 0; s.coins = 0;
     s.obstacles = []; s.spawnTimer = 0.5; s.running = true; s.gameOver = false;
+    s.grounded = true; s.coyote = 0; s.jumpBuffer = 0; s.jumpHeld = false; s.jumpsUsed = 0;
     setScore(0); setCoins(0); setGameOver(false); setRunning(true);
   }, []);
 
@@ -68,24 +75,41 @@ function Page() {
   const jump = useCallback(() => {
     const s = stateRef.current;
     if (!s.running) return;
-    if (s.y <= 0.02) s.vy = 8.5;
+    // Buffer the input; the physics step consumes it when grounded/coyote/double-jump allows
+    s.jumpBuffer = 0.15;
+    s.jumpHeld = true;
+  }, []);
+  const releaseJump = useCallback(() => {
+    stateRef.current.jumpHeld = false;
   }, []);
   const slide = useCallback(() => {
     const s = stateRef.current;
     if (!s.running) return;
+    // Sliding while airborne slams you down for a fast landing
+    if (s.y > 0.05) {
+      s.vy = Math.min(s.vy, -14);
+    }
     if (s.slide <= 0) s.slide = 0.7;
   }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.repeat) return;
       if (e.key === "ArrowLeft" || e.key === "a") move(-1);
       else if (e.key === "ArrowRight" || e.key === "d") move(1);
       else if (e.key === "ArrowUp" || e.key === "w" || e.key === " ") { e.preventDefault(); jump(); }
       else if (e.key === "ArrowDown" || e.key === "s") slide();
     };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "ArrowUp" || e.key === "w" || e.key === " ") releaseJump();
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [move, jump, slide]);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [move, jump, releaseJump, slide]);
 
   // Swipe
   const touchStart = useRef<{x:number;y:number}|null>(null);
@@ -151,11 +175,16 @@ function Page() {
         {running && (
           <>
             <div className="pointer-events-none absolute bottom-24 md:bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-card/70 backdrop-blur border px-4 py-1.5 text-xs text-muted-foreground">
-              ← → move · ↑ jump · ↓ slide · swipe on mobile
+              ← → move · ↑ jump (hold higher · tap again for double) · ↓ slide
             </div>
             <div className="absolute bottom-6 inset-x-0 flex justify-center gap-3 md:hidden">
               <button onClick={() => move(-1)} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">←</button>
-              <button onClick={jump} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">↑</button>
+              <button
+                onPointerDown={jump}
+                onPointerUp={releaseJump}
+                onPointerLeave={releaseJump}
+                className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow"
+              >↑</button>
               <button onClick={slide} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">↓</button>
               <button onClick={() => move(1)} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">→</button>
             </div>
@@ -276,13 +305,53 @@ function World({
     const targetX = s.lane * LANE_X;
     s.laneX += (targetX - s.laneX) * Math.min(1, clamped * 14);
 
-    // Physics
+    // Physics — realistic jump w/ variable height, coyote time & jump buffer
     if (s.running) {
       s.distance += s.speed * clamped;
       s.speed = Math.min(30, s.speed + clamped * 0.2);
-      s.vy -= 20 * clamped;
-      s.y = Math.max(0, s.y + s.vy * clamped);
-      if (s.y === 0) s.vy = 0;
+
+      // Gravity — heavier when falling or when the jump button is released early
+      const rising = s.vy > 0;
+      const gravity = rising && s.jumpHeld ? 22 : rising ? 42 : 46;
+      s.vy -= gravity * clamped;
+
+      // Terminal fall speed so slides feel snappy
+      if (s.vy < -30) s.vy = -30;
+
+      s.y += s.vy * clamped;
+
+      // Ground contact
+      if (s.y <= 0) {
+        s.y = 0;
+        s.vy = 0;
+        s.grounded = true;
+        s.coyote = 0.12;
+        s.jumpsUsed = 0;
+      } else {
+        s.grounded = false;
+        s.coyote = Math.max(0, s.coyote - clamped);
+      }
+
+      // Consume buffered jump
+      s.jumpBuffer = Math.max(0, s.jumpBuffer - clamped);
+      if (s.jumpBuffer > 0) {
+        const canGround = s.grounded || s.coyote > 0;
+        const canDouble = !canGround && s.jumpsUsed < 2;
+        if (canGround) {
+          s.vy = 13;              // strong initial pop
+          s.jumpsUsed = 1;
+          s.grounded = false;
+          s.coyote = 0;
+          s.jumpBuffer = 0;
+          s.slide = 0;
+        } else if (canDouble) {
+          s.vy = 11;              // slightly weaker double-jump
+          s.jumpsUsed = 2;
+          s.jumpBuffer = 0;
+          s.slide = 0;
+        }
+      }
+
       if (s.slide > 0) s.slide = Math.max(0, s.slide - clamped);
     }
 
@@ -347,7 +416,7 @@ function World({
         const playerZ = 0;
         if (playerZ >= zBack - 0.4 && playerZ <= zFront + 0.4) {
           if (o.type === "coin") {
-            if (Math.abs(ox - px) < 0.9 && Math.abs(o.z - playerZ) < 0.8 && py < 1.6) {
+            if (Math.abs(ox - px) < 0.9 && Math.abs(o.z - playerZ) < 0.8 && Math.abs(py + 1 - 1.1) < 1.4) {
               o.collected = true;
               s.coins += 1;
             }
