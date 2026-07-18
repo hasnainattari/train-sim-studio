@@ -27,6 +27,10 @@ function Page() {
   const [score, setScore] = useState(0);
   const [coins, setCoins] = useState(0);
   const [best, setBest] = useState(0);
+  const [pickupFlash, setPickupFlash] = useState(0); // increments to retrigger animation
+  const coinsRef = useRef(0);
+  const COIN_VALUE = 10;
+  const points = score + coins * COIN_VALUE;
 
   const stateRef = useRef({
     lane: 0 as -1 | 0 | 1,
@@ -64,6 +68,7 @@ function Page() {
     s.speed = 14; s.distance = 0; s.coins = 0;
     s.obstacles = []; s.spawnTimer = 0.5; s.running = true; s.gameOver = false;
     s.grounded = true; s.coyote = 0; s.jumpBuffer = 0; s.jumpHeld = false; s.jumpsUsed = 0;
+    coinsRef.current = 0;
     setScore(0); setCoins(0); setGameOver(false); setRunning(true);
   }, []);
 
@@ -128,10 +133,20 @@ function Page() {
   };
 
   const onEnd = useCallback((finalDist: number, finalCoins: number) => {
+    const finalPoints = finalDist + finalCoins * COIN_VALUE;
     setRunning(false); setGameOver(true);
     setScore(finalDist); setCoins(finalCoins);
-    if (finalDist > best) { setBest(finalDist); localStorage.setItem("rail-rush-best", String(finalDist)); }
+    if (finalPoints > best) { setBest(finalPoints); localStorage.setItem("rail-rush-best", String(finalPoints)); }
   }, [best]);
+
+  const handleScoreUpdate = useCallback((d: number, c: number) => {
+    setScore(d);
+    if (c > coinsRef.current) {
+      coinsRef.current = c;
+      setPickupFlash((f) => f + 1);
+    }
+    setCoins(c);
+  }, []);
 
   const isDark = theme === "dark";
 
@@ -147,30 +162,45 @@ function Page() {
             <Scene
               stateRef={stateRef}
               theme={theme}
-              onScoreUpdate={(d, c) => { setScore(d); setCoins(c); }}
+              onScoreUpdate={handleScoreUpdate}
               onEnd={onEnd}
             />
           </Suspense>
         </Canvas>
 
         {/* HUD */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-4">
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-4 gap-3">
           <div className="pointer-events-auto rounded-2xl bg-card/85 backdrop-blur px-4 py-2 shadow-sm border">
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Distance</div>
-            <div className="text-2xl font-bold tabular-nums leading-none">{score}<span className="text-sm font-medium text-muted-foreground">m</span></div>
-            <div className="mt-1 text-[10px] text-muted-foreground">Best {best}m</div>
+            <div className="text-xl font-bold tabular-nums leading-none">{score}<span className="text-xs font-medium text-muted-foreground">m</span></div>
           </div>
-          <div className="pointer-events-auto rounded-2xl bg-card/85 backdrop-blur px-4 py-2 shadow-sm border flex items-center gap-2">
+
+          <div className="pointer-events-auto rounded-2xl bg-card/90 backdrop-blur px-5 py-2 shadow-md border text-center">
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Score</div>
+            <div className="text-3xl font-black tabular-nums leading-none">{points.toLocaleString()}</div>
+            <div className="mt-1 text-[10px] text-muted-foreground">Best {best.toLocaleString()}</div>
+          </div>
+
+          <div className="pointer-events-auto relative rounded-2xl bg-card/85 backdrop-blur px-4 py-2 shadow-sm border flex items-center gap-2">
             <span className="inline-block h-4 w-4 rounded-full bg-yellow-400 shadow-inner shadow-yellow-600" />
             <span className="text-xl font-bold tabular-nums">{coins}</span>
+            {pickupFlash > 0 && (
+              <span
+                key={pickupFlash}
+                className="pointer-events-none absolute -top-2 right-2 text-sm font-bold text-yellow-500 animate-[coinPop_0.7s_ease-out_forwards]"
+              >
+                +{COIN_VALUE}
+              </span>
+            )}
           </div>
-          <button
-            onClick={() => setTheme(isDark ? "light" : "dark")}
-            className="pointer-events-auto rounded-full bg-card/85 backdrop-blur border px-3 py-2 text-sm shadow-sm hover:bg-accent transition"
-          >
-            {isDark ? "☀️ Light" : "🌙 Dark"}
-          </button>
         </div>
+        <button
+          onClick={() => setTheme(isDark ? "light" : "dark")}
+          className="pointer-events-auto absolute top-4 right-4 translate-y-20 rounded-full bg-card/85 backdrop-blur border px-3 py-2 text-xs shadow-sm hover:bg-accent transition"
+        >
+          {isDark ? "☀️ Light" : "🌙 Dark"}
+        </button>
+        <style>{`@keyframes coinPop { 0% { opacity: 0; transform: translateY(4px) scale(0.8);} 20% { opacity: 1; transform: translateY(-6px) scale(1.15);} 100% { opacity: 0; transform: translateY(-28px) scale(1);} }`}</style>
 
         {running && (
           <>
@@ -199,10 +229,11 @@ function Page() {
                 {gameOver ? "You crashed!" : "3D subway runner. Grab coins. Dodge trains."}
               </p>
               {gameOver && (
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <Stat label="Score" value={`${score}m`} />
-                  <Stat label="Coins" value={String(coins)} />
-                  <Stat label="Best" value={`${best}m`} />
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <Stat label="Score" value={points.toLocaleString()} />
+                  <Stat label="Best" value={best.toLocaleString()} />
+                  <Stat label="Distance" value={`${score}m`} />
+                  <Stat label="Coins" value={`${coins} (+${coins * COIN_VALUE})`} />
                 </div>
               )}
               <button
