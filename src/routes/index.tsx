@@ -300,13 +300,53 @@ function World({
     const targetX = s.lane * LANE_X;
     s.laneX += (targetX - s.laneX) * Math.min(1, clamped * 14);
 
-    // Physics
+    // Physics — realistic jump w/ variable height, coyote time & jump buffer
     if (s.running) {
       s.distance += s.speed * clamped;
       s.speed = Math.min(30, s.speed + clamped * 0.2);
-      s.vy -= 20 * clamped;
-      s.y = Math.max(0, s.y + s.vy * clamped);
-      if (s.y === 0) s.vy = 0;
+
+      // Gravity — heavier when falling or when the jump button is released early
+      const rising = s.vy > 0;
+      const gravity = rising && s.jumpHeld ? 22 : rising ? 42 : 46;
+      s.vy -= gravity * clamped;
+
+      // Terminal fall speed so slides feel snappy
+      if (s.vy < -30) s.vy = -30;
+
+      s.y += s.vy * clamped;
+
+      // Ground contact
+      if (s.y <= 0) {
+        s.y = 0;
+        s.vy = 0;
+        s.grounded = true;
+        s.coyote = 0.12;
+        s.jumpsUsed = 0;
+      } else {
+        s.grounded = false;
+        s.coyote = Math.max(0, s.coyote - clamped);
+      }
+
+      // Consume buffered jump
+      s.jumpBuffer = Math.max(0, s.jumpBuffer - clamped);
+      if (s.jumpBuffer > 0) {
+        const canGround = s.grounded || s.coyote > 0;
+        const canDouble = !canGround && s.jumpsUsed < 2;
+        if (canGround) {
+          s.vy = 13;              // strong initial pop
+          s.jumpsUsed = 1;
+          s.grounded = false;
+          s.coyote = 0;
+          s.jumpBuffer = 0;
+          s.slide = 0;
+        } else if (canDouble) {
+          s.vy = 11;              // slightly weaker double-jump
+          s.jumpsUsed = 2;
+          s.jumpBuffer = 0;
+          s.slide = 0;
+        }
+      }
+
       if (s.slide > 0) s.slide = Math.max(0, s.slide - clamped);
     }
 
