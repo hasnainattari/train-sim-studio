@@ -411,7 +411,7 @@ function World({
         const playerZ = 0;
         if (playerZ >= zBack - 0.4 && playerZ <= zFront + 0.4) {
           if (o.type === "coin") {
-            if (Math.abs(ox - px) < 0.9 && Math.abs(o.z - playerZ) < 0.8 && py < 1.6) {
+            if (Math.abs(ox - px) < 0.9 && Math.abs(o.z - playerZ) < 0.8 && Math.abs(py + 1 - 1.1) < 1.4) {
               o.collected = true;
               s.coins += 1;
             }
