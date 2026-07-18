@@ -169,23 +169,38 @@ function Page() {
         </Canvas>
 
         {/* HUD */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-4">
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between p-4 gap-3">
           <div className="pointer-events-auto rounded-2xl bg-card/85 backdrop-blur px-4 py-2 shadow-sm border">
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Distance</div>
-            <div className="text-2xl font-bold tabular-nums leading-none">{score}<span className="text-sm font-medium text-muted-foreground">m</span></div>
-            <div className="mt-1 text-[10px] text-muted-foreground">Best {best}m</div>
+            <div className="text-xl font-bold tabular-nums leading-none">{score}<span className="text-xs font-medium text-muted-foreground">m</span></div>
           </div>
-          <div className="pointer-events-auto rounded-2xl bg-card/85 backdrop-blur px-4 py-2 shadow-sm border flex items-center gap-2">
+
+          <div className="pointer-events-auto rounded-2xl bg-card/90 backdrop-blur px-5 py-2 shadow-md border text-center">
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Score</div>
+            <div className="text-3xl font-black tabular-nums leading-none">{points.toLocaleString()}</div>
+            <div className="mt-1 text-[10px] text-muted-foreground">Best {best.toLocaleString()}</div>
+          </div>
+
+          <div className="pointer-events-auto relative rounded-2xl bg-card/85 backdrop-blur px-4 py-2 shadow-sm border flex items-center gap-2">
             <span className="inline-block h-4 w-4 rounded-full bg-yellow-400 shadow-inner shadow-yellow-600" />
             <span className="text-xl font-bold tabular-nums">{coins}</span>
+            {pickupFlash > 0 && (
+              <span
+                key={pickupFlash}
+                className="pointer-events-none absolute -top-2 right-2 text-sm font-bold text-yellow-500 animate-[coinPop_0.7s_ease-out_forwards]"
+              >
+                +{COIN_VALUE}
+              </span>
+            )}
           </div>
-          <button
-            onClick={() => setTheme(isDark ? "light" : "dark")}
-            className="pointer-events-auto rounded-full bg-card/85 backdrop-blur border px-3 py-2 text-sm shadow-sm hover:bg-accent transition"
-          >
-            {isDark ? "☀️ Light" : "🌙 Dark"}
-          </button>
         </div>
+        <button
+          onClick={() => setTheme(isDark ? "light" : "dark")}
+          className="pointer-events-auto absolute top-4 right-4 translate-y-20 rounded-full bg-card/85 backdrop-blur border px-3 py-2 text-xs shadow-sm hover:bg-accent transition"
+        >
+          {isDark ? "☀️ Light" : "🌙 Dark"}
+        </button>
+        <style>{`@keyframes coinPop { 0% { opacity: 0; transform: translateY(4px) scale(0.8);} 20% { opacity: 1; transform: translateY(-6px) scale(1.15);} 100% { opacity: 0; transform: translateY(-28px) scale(1);} }`}</style>
 
         {running && (
           <>
