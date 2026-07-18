@@ -162,7 +162,7 @@ function Page() {
             <Scene
               stateRef={stateRef}
               theme={theme}
-              onScoreUpdate={(d, c) => { setScore(d); setCoins(c); }}
+              onScoreUpdate={handleScoreUpdate}
               onEnd={onEnd}
             />
           </Suspense>
