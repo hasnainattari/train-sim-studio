@@ -63,6 +63,7 @@ function Page() {
     s.lane = 0; s.laneX = 0; s.y = 0; s.vy = 0; s.slide = 0;
     s.speed = 14; s.distance = 0; s.coins = 0;
     s.obstacles = []; s.spawnTimer = 0.5; s.running = true; s.gameOver = false;
+    s.grounded = true; s.coyote = 0; s.jumpBuffer = 0; s.jumpHeld = false; s.jumpsUsed = 0;
     setScore(0); setCoins(0); setGameOver(false); setRunning(true);
   }, []);
 
@@ -74,24 +75,41 @@ function Page() {
   const jump = useCallback(() => {
     const s = stateRef.current;
     if (!s.running) return;
-    if (s.y <= 0.02) s.vy = 8.5;
+    // Buffer the input; the physics step consumes it when grounded/coyote/double-jump allows
+    s.jumpBuffer = 0.15;
+    s.jumpHeld = true;
+  }, []);
+  const releaseJump = useCallback(() => {
+    stateRef.current.jumpHeld = false;
   }, []);
   const slide = useCallback(() => {
     const s = stateRef.current;
     if (!s.running) return;
+    // Sliding while airborne slams you down for a fast landing
+    if (s.y > 0.05) {
+      s.vy = Math.min(s.vy, -14);
+    }
     if (s.slide <= 0) s.slide = 0.7;
   }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (e.repeat) return;
       if (e.key === "ArrowLeft" || e.key === "a") move(-1);
       else if (e.key === "ArrowRight" || e.key === "d") move(1);
       else if (e.key === "ArrowUp" || e.key === "w" || e.key === " ") { e.preventDefault(); jump(); }
       else if (e.key === "ArrowDown" || e.key === "s") slide();
     };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "ArrowUp" || e.key === "w" || e.key === " ") releaseJump();
+    };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [move, jump, slide]);
+    window.addEventListener("keyup", onKeyUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
+    };
+  }, [move, jump, releaseJump, slide]);
 
   // Swipe
   const touchStart = useRef<{x:number;y:number}|null>(null);
