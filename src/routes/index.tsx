@@ -229,10 +229,11 @@ function Page() {
                 {gameOver ? "You crashed!" : "3D subway runner. Grab coins. Dodge trains."}
               </p>
               {gameOver && (
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <Stat label="Score" value={`${score}m`} />
-                  <Stat label="Coins" value={String(coins)} />
-                  <Stat label="Best" value={`${best}m`} />
+                <div className="mt-4 grid grid-cols-2 gap-2">
+                  <Stat label="Score" value={points.toLocaleString()} />
+                  <Stat label="Best" value={best.toLocaleString()} />
+                  <Stat label="Distance" value={`${score}m`} />
+                  <Stat label="Coins" value={`${coins} (+${coins * COIN_VALUE})`} />
                 </div>
               )}
               <button
