@@ -27,6 +27,10 @@ function Page() {
   const [score, setScore] = useState(0);
   const [coins, setCoins] = useState(0);
   const [best, setBest] = useState(0);
+  const [pickupFlash, setPickupFlash] = useState(0); // increments to retrigger animation
+  const coinsRef = useRef(0);
+  const COIN_VALUE = 10;
+  const points = score + coins * COIN_VALUE;
 
   const stateRef = useRef({
     lane: 0 as -1 | 0 | 1,
