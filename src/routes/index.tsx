@@ -179,7 +179,12 @@ function Page() {
             </div>
             <div className="absolute bottom-6 inset-x-0 flex justify-center gap-3 md:hidden">
               <button onClick={() => move(-1)} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">←</button>
-              <button onClick={jump} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">↑</button>
+              <button
+                onPointerDown={jump}
+                onPointerUp={releaseJump}
+                onPointerLeave={releaseJump}
+                className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow"
+              >↑</button>
               <button onClick={slide} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">↓</button>
               <button onClick={() => move(1)} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">→</button>
             </div>
