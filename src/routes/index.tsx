@@ -175,7 +175,7 @@ function Page() {
         {running && (
           <>
             <div className="pointer-events-none absolute bottom-24 md:bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-card/70 backdrop-blur border px-4 py-1.5 text-xs text-muted-foreground">
-              ← → move · ↑ jump · ↓ slide · swipe on mobile
+              ← → move · ↑ jump (hold higher · tap again for double) · ↓ slide
             </div>
             <div className="absolute bottom-6 inset-x-0 flex justify-center gap-3 md:hidden">
               <button onClick={() => move(-1)} className="pointer-events-auto h-14 w-14 rounded-full bg-card/85 backdrop-blur border text-xl shadow">←</button>
