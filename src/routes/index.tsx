@@ -42,6 +42,12 @@ function Page() {
     nextId: 1,
     running: false,
     gameOver: false,
+    // Jump physics
+    grounded: true,
+    coyote: 0,        // time since leaving ground where jump still allowed
+    jumpBuffer: 0,    // buffered jump input if pressed just before landing
+    jumpHeld: false,  // for variable jump height
+    jumpsUsed: 0,     // for double jump
   });
 
   useEffect(() => {
